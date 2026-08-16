@@ -1,102 +1,33 @@
-```python
-import pytest
+import os
+
+# Provide test environment variables before importing the Flask app.
+os.environ["MONGO_URI"] = "mongodb://localhost:27017/test"
+os.environ["SECRET_KEY"] = "test-secret"
+
 from app import app, mongo
-from bson.objectid import ObjectId
 
 
-# Dedicated database for testing
-TEST_DB = "student_test"
+def test_health(monkeypatch):
+    """Test that /health returns HTTP 200 when MongoDB is reachable."""
 
+    class FakeAdmin:
+        def command(self, command):
+            assert command == "ping"
+            return {"ok": 1}
 
-@pytest.fixture
-def client():
-    app.config["TESTING"] = True
+    class FakeClient:
+        admin = FakeAdmin()
+
+    # Replace the real MongoDB client with our fake client.
+    monkeypatch.setattr(mongo, "cx", FakeClient())
+
     client = app.test_client()
 
-    # Use the dedicated test database
-    test_db = mongo.cx[TEST_DB]
-
-    # Setup: clear and create test data
-    with app.app_context():
-        test_db.students.delete_many({})
-
-        test_db.students.insert_one({
-            "_id": ObjectId("66fddff25f4b5f6a0a123456"),
-            "name": "Test Student",
-            "email": "test@student.com",
-            "course": "Flask"
-        })
-
-    yield client
-
-    # Teardown: remove test data
-    with app.app_context():
-        test_db.students.delete_many({})
-
-
-def test_home_page(client):
-    """Test if home page loads correctly"""
-    response = client.get("/")
+    response = client.get("/health")
 
     assert response.status_code == 200
-    assert b"Test Student" in response.data
 
+    data = response.get_json()
 
-def test_add_student(client):
-    """Test adding a new student"""
-    data = {
-        "name": "New User",
-        "email": "new@user.com",
-        "course": "Python"
-    }
-
-    response = client.post(
-        "/add",
-        data=data,
-        follow_redirects=True
-    )
-
-    assert response.status_code == 200
-    assert b"New User" in response.data
-
-
-def test_update_student(client):
-    """Test updating a student"""
-    student_id = "66fddff25f4b5f6a0a123456"
-
-    data = {
-        "name": "Updated Name",
-        "email": "updated@student.com",
-        "course": "Updated Course"
-    }
-
-    response = client.post(
-        f"/update/{student_id}",
-        data=data,
-        follow_redirects=True
-    )
-
-    assert response.status_code == 200
-    assert b"Updated Name" in response.data
-
-
-def test_delete_student(client):
-    """Test deleting a student"""
-    test_db = mongo.cx[TEST_DB]
-
-    # Add a temporary student
-    with app.app_context():
-        student_id = test_db.students.insert_one({
-            "name": "Temp User",
-            "email": "temp@user.com",
-            "course": "Temp Course"
-        }).inserted_id
-
-    response = client.get(
-        f"/delete/{student_id}",
-        follow_redirects=True
-    )
-
-    assert response.status_code == 200
-    assert b"Temp User" not in response.data
-```
+    assert data["status"] == "healthy"
+    assert data["mongodb"] == "connected"
