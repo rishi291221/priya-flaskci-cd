@@ -1,4 +1,4 @@
-name: Flask CI/CD pipeline to build docker, Ecr to Ec2
+name: Flask CI/CD _ Pipeline
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
     steps:
 
       # --------------------------------------------------------
-      # 1. Checkout
+      # STAGE 1 - CHECKOUT
       # --------------------------------------------------------
 
       - name: "1. Checkout"
@@ -43,7 +43,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # 2. Setup Python
+      # STAGE 2 - INSTALL
       # --------------------------------------------------------
 
       - name: "2. Setup Python"
@@ -54,28 +54,26 @@ jobs:
           python-version: "3.11"
 
 
-      # --------------------------------------------------------
-      # 3. Install dependencies
-      # --------------------------------------------------------
-
-      - name: "3. Install dependencies"
+      - name: "2. Install dependencies"
 
         run: |
 
           echo "======================================"
-          echo "INSTALL DEPENDENCIES"
+          echo "STAGE 2 - INSTALL"
           echo "======================================"
 
           python -m pip install --upgrade pip
 
           pip install -r requirements.txt
 
+          echo "Dependencies installed successfully."
+
 
       # --------------------------------------------------------
-      # 4. Run pytest
+      # STAGE 3 - TEST
       # --------------------------------------------------------
 
-      - name: "4. Run pytest"
+      - name: "3. Run pytest"
 
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
@@ -84,7 +82,7 @@ jobs:
         run: |
 
           echo "======================================"
-          echo "RUNNING PYTEST"
+          echo "STAGE 3 - TEST"
           echo "======================================"
 
           pytest -v
@@ -95,12 +93,12 @@ jobs:
 
 
 # ============================================================
-# JOB 2 - BUILD + PUSH TO ECR
+# JOB 2 - BUILD + PUSH ECR
 # ============================================================
 
   build:
 
-    name: "2. Build Docker + Push ECR"
+    name: "2. Build + Push ECR"
 
     runs-on: ubuntu-latest
 
@@ -110,7 +108,7 @@ jobs:
     steps:
 
       # --------------------------------------------------------
-      # Checkout
+      # CHECKOUT
       # --------------------------------------------------------
 
       - name: "Checkout"
@@ -119,16 +117,19 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Build Docker image
+      # STAGE 4 - BUILD
       # --------------------------------------------------------
 
-      - name: "Build Docker image"
+      - name: "4. Build Docker image"
 
         run: |
 
           echo "======================================"
-          echo "BUILD DOCKER IMAGE"
+          echo "STAGE 4 - BUILD"
           echo "======================================"
+
+          echo "Building image with commit SHA:"
+          echo "${{ github.sha }}"
 
           docker build \
             -t "$ECR_REPOSITORY:${{ github.sha }}" \
@@ -138,7 +139,7 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Configure AWS
+      # AWS CREDENTIALS
       # --------------------------------------------------------
 
       - name: "Configure AWS credentials"
@@ -155,10 +156,10 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Login to ECR
+      # STAGE 5 - ECR LOGIN
       # --------------------------------------------------------
 
-      - name: "Login to Amazon ECR"
+      - name: "5. Login to Amazon ECR"
 
         id: login-ecr
 
@@ -166,10 +167,10 @@ jobs:
 
 
       # --------------------------------------------------------
-      # Push Docker image
+      # STAGE 5 - PUSH
       # --------------------------------------------------------
 
-      - name: "Push Docker image to ECR"
+      - name: "5. Push Docker image to ECR"
 
         env:
 
@@ -180,12 +181,12 @@ jobs:
         run: |
 
           echo "======================================"
-          echo "PUSH DOCKER IMAGE TO ECR"
+          echo "STAGE 5 - PUSH TO ECR"
           echo "======================================"
 
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "Image:"
+          echo "Image URI:"
           echo "$IMAGE_URI"
 
           docker tag \
@@ -195,12 +196,12 @@ jobs:
           docker push "$IMAGE_URI"
 
           echo "======================================"
-          echo "IMAGE PUSHED TO ECR"
+          echo "IMAGE PUSHED TO ECR SUCCESSFULLY"
           echo "======================================"
 
 
 # ============================================================
-# JOB 3 - DEPLOY TO EC2
+# JOB 3 - DEPLOY + VERIFY EC2
 # ============================================================
 
   deploy:
@@ -215,20 +216,16 @@ jobs:
     steps:
 
       # --------------------------------------------------------
-      # Deploy to EC2
+      # STAGE 6 - DEPLOY TO EC2
       # --------------------------------------------------------
 
-      - name: "Deploy to EC2"
+      - name: "6. Deploy to EC2"
 
         uses: appleboy/ssh-action@v1.2.5
 
         env:
 
           AWS_REGION: ${{ secrets.AWS_REGION }}
-
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
           ECR_REGISTRY: 206226812351.dkr.ecr.us-east-1.amazonaws.com
 
@@ -254,7 +251,7 @@ jobs:
 
           port: 22
 
-          envs: AWS_REGION,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,CONTAINER_NAME,APP_PORT,MONGO_URI,SECRET_KEY
+          envs: AWS_REGION,ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,CONTAINER_NAME,APP_PORT,MONGO_URI,SECRET_KEY
 
           script: |
 
@@ -275,7 +272,7 @@ jobs:
 
 
             # --------------------------------------------------
-            # Build image URI
+            # IMAGE URI
             # --------------------------------------------------
 
             IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
@@ -285,7 +282,7 @@ jobs:
 
 
             # --------------------------------------------------
-            # Login to ECR
+            # ECR LOGIN
             # --------------------------------------------------
 
             echo "Logging into Amazon ECR..."
@@ -300,7 +297,7 @@ jobs:
 
 
             # --------------------------------------------------
-            # Pull image
+            # PULL IMAGE
             # --------------------------------------------------
 
             echo "Pulling Docker image..."
@@ -311,7 +308,7 @@ jobs:
 
 
             # --------------------------------------------------
-            # Stop existing container
+            # STOP OLD CONTAINER
             # --------------------------------------------------
 
             echo "Stopping existing container..."
@@ -320,7 +317,7 @@ jobs:
 
 
             # --------------------------------------------------
-            # Remove existing container
+            # REMOVE OLD CONTAINER
             # --------------------------------------------------
 
             echo "Removing existing container..."
@@ -329,17 +326,17 @@ jobs:
 
 
             # --------------------------------------------------
-            # Create application directory
+            # CREATE APPLICATION DIRECTORY
             # --------------------------------------------------
 
             mkdir -p "$HOME/flask-practice"
 
 
             # --------------------------------------------------
-            # Create environment file
+            # CREATE ENVIRONMENT FILE
             # --------------------------------------------------
 
-            echo "Creating environment file..."
+            echo "Creating application environment file..."
 
             cat > "$HOME/flask-practice/.env" <<EOF
             MONGO_URI=$MONGO_URI
@@ -350,7 +347,7 @@ jobs:
 
 
             # --------------------------------------------------
-            # Start new container
+            # START CONTAINER
             # --------------------------------------------------
 
             echo "Starting new container..."
@@ -362,28 +359,26 @@ jobs:
               -p "$APP_PORT:$APP_PORT" \
               "$IMAGE_URI"
 
-
-            echo "Container started."
+            echo "New container started."
 
 
             # --------------------------------------------------
-            # Verify container
+            # SHOW CONTAINER
             # --------------------------------------------------
 
             docker ps \
               --filter "name=$CONTAINER_NAME"
 
-
             echo "======================================"
-            echo "EC2 DEPLOYMENT COMPLETED"
+            echo "STAGE 6 - DEPLOYMENT COMPLETED"
             echo "======================================"
 
 
-      # ========================================================
+      # --------------------------------------------------------
       # STAGE 7 - VERIFY
-      # ========================================================
+      # --------------------------------------------------------
 
-      - name: "Verify /health"
+      - name: "7. Verify /health"
 
         uses: appleboy/ssh-action@v1.2.5
 
@@ -412,7 +407,7 @@ jobs:
 
 
             # --------------------------------------------------
-            # Poll health endpoint
+            # POLL HEALTH ENDPOINT
             # --------------------------------------------------
 
             for i in {1..12}
@@ -426,7 +421,6 @@ jobs:
                 --output /tmp/health_response.txt \
                 --write-out "%{http_code}" \
                 "$HEALTH_URL" || true)
-
 
               echo "HTTP status: $HTTP_STATUS"
 
@@ -444,6 +438,8 @@ jobs:
 
                 echo ""
 
+                echo "STAGE 7 - VERIFY SUCCESS"
+
                 exit 0
 
               fi
@@ -457,36 +453,40 @@ jobs:
 
 
             # --------------------------------------------------
-            # Health check failed
+            # HEALTH FAILURE
             # --------------------------------------------------
 
             echo ""
             echo "======================================"
-            echo "HEALTH CHECK FAILED"
+            echo "STAGE 7 - VERIFY FAILED"
             echo "======================================"
 
+            echo "The application did not return HTTP 200."
+
+
+            echo ""
             echo "Container status:"
 
             docker ps -a \
-              --filter "name=flask-practice_EC2"
+              --filter "name=$CONTAINER_NAME"
 
 
             echo ""
             echo "Container logs:"
 
-            docker logs flask-practice_EC2 --tail 50 || true
+            docker logs "$CONTAINER_NAME" --tail 50 || true
 
 
             exit 1
 
 
 # ============================================================
-# JOB 4 - NOTIFICATION
+# JOB 4 - Success  NOTIFICATION
 # ============================================================
 
   notify:
 
-    name: "4. Notification"
+    name: "4. Success / Failure Notification"
 
     runs-on: ubuntu-latest
 
@@ -504,7 +504,7 @@ jobs:
       # SUCCESS EMAIL
       # ========================================================
 
-      - name: "SUCCESS notification"
+      - name: "SUCCESS - Send email"
 
         if: |
           needs.test.result == 'success' &&
@@ -529,46 +529,61 @@ jobs:
 
           to: ${{ secrets.MAIL_TO }}
 
-          subject: "SUCCESS - Flask CI/CD Pipeline"
+          subject: "SUCCESS - Flask CI/CD Deployment"
 
           body: |
 
-            Flask CI/CD pipeline completed successfully.
+            Flask CI/CD Deployment SUCCESS
+
 
             ==========================================
             DEPLOYMENT SUCCESS
             ==========================================
 
-            Repository:
-            ${{ github.repository }}
+            Repository: ${{ github.repository }}
 
-            Branch:
-            ${{ github.ref_name }}
+            Commit SHA: ${{ github.sha }}
 
-            Commit:
+            Status: SUCCESS
+
+
+            Pipeline Results:
+
+            Checkout        - SUCCESS
+            Install         - SUCCESS
+            Test            - SUCCESS
+            Build           - SUCCESS
+            Push ECR        - SUCCESS
+            Deploy EC2      - SUCCESS
+            Verify /health  - SUCCESS
+
+
+            The application was successfully deployed
+            to EC2 and returned HTTP 200 from /health.
+
+
+            Docker image:
+
             ${{ github.sha }}
 
-            Pipeline:
-
-            1. Checkout       - SUCCESS
-            2. Install        - SUCCESS
-            3. Test           - SUCCESS
-            4. Docker Build   - SUCCESS
-            5. Push to ECR    - SUCCESS
-            6. Deploy to EC2  - SUCCESS
-            7. /health        - SUCCESS
-
-            The Flask application returned HTTP 200.
 
             Workflow:
+
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
 
-      # ========================================================
-      # FAILURE EMAIL
-      # ========================================================
+            ==========================================
+            Flask CI/CD Deployment completed successfully.
+            ==========================================
 
-      - name: "FAILURE notification"
+
+# # ============================================================
+# JOB  5- Failure  NOTIFICATION
+# ============================================================
+
+
+
+      - name: "FAILURE - Send email"
 
         if: |
           needs.test.result != 'success' ||
@@ -593,53 +608,90 @@ jobs:
 
           to: ${{ secrets.MAIL_TO }}
 
-          subject: "FAILED - Flask CI/CD Pipeline"
+          subject: "FAILED - Flask CI/CD Deployment"
 
           body: |
 
-            Flask CI/CD pipeline FAILED.
+            Flask CI/CD Deployment FAILED
+
 
             ==========================================
             DEPLOYMENT FAILURE
             ==========================================
 
-            Repository:
-            ${{ github.repository }}
+            Repository: ${{ github.repository }}
 
-            Branch:
-            ${{ github.ref_name }}
+            Commit SHA: ${{ github.sha }}
 
-            Commit:
-            ${{ github.sha }}
+            Status: FAILED
 
 
             ==========================================
-            JOB RESULTS
+            FAILED STAGE
             ==========================================
 
-            TEST:
+
+            TEST JOB:
             ${{ needs.test.result }}
 
-            BUILD + ECR:
+
+            BUILD + ECR JOB:
             ${{ needs.build.result }}
 
-            EC2 DEPLOYMENT:
+
+            EC2 DEPLOYMENT JOB:
             ${{ needs.deploy.result }}
+
+
+            ==========================================
+            FAILURE DETAILS
+            ==========================================
+
+
+            If TEST failed:
+
+            pytest failed.
+
+            Docker image was NOT built,
+            pushed or deployed.
+
+
+            If BUILD + ECR failed:
+
+            Docker build or ECR push failed.
+
+            The image was NOT deployed to EC2.
+
+
+            If EC2 DEPLOYMENT failed:
+
+            EC2 deployment or SSH failed.
+
+
+            If VERIFY failed:
+
+            The application did not return
+            HTTP 200 from /health.
 
 
             ==========================================
             PIPELINE
             ==========================================
 
-            1. Checkout
-            2. Install
-            3. Test
-            4. Docker Build
-            5. Push to ECR
-            6. Deploy to EC2
-            7. Verify /health
+            Checkout
+            Install
+            Test
+            Build
+            Push ECR
+            Deploy EC2
+            Verify /health
 
 
             Please check the GitHub Actions logs:
 
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+
+            ==========================================
+            Flask CI/CD Deployment FAILED.
+            ==========================================
