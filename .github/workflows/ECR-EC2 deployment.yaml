@@ -11,7 +11,7 @@ permissions:
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: flask-practice
+  ECR_REPOSITORY: priya/flask-cicd
   CONTAINER_NAME: flask-practice
   APP_PORT: 5000
 
