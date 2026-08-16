@@ -127,8 +127,9 @@ jobs:
       # --------------------------------------------------------
       # 6. DEPLOY TO EC2
       # --------------------------------------------------------
-      - name: 6. Deploy to EC2
+       - name: 6. Deploy to EC2
         uses: appleboy/ssh-action@v1.2.5
+
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -138,10 +139,12 @@ jobs:
           APP_PORT: ${{ env.APP_PORT }}
           MONGO_URI: ${{ secrets.MONGO_URI }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
+
         with:
           host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
+          username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
 
           envs: AWS_REGION,ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,CONTAINER_NAME,APP_PORT,MONGO_URI,SECRET_KEY
 
@@ -195,7 +198,7 @@ jobs:
             docker rm "$CONTAINER_NAME" || true
 
             # --------------------------------------------------
-            # Create environment directory
+            # Create application directory
             # --------------------------------------------------
             mkdir -p ~/flask-practice
 
@@ -232,8 +235,8 @@ jobs:
 
             docker ps --filter "name=$CONTAINER_NAME"
 
-            echo "EC2 deployment completed."
-
+            echo "EC2 deployment completed."     
+      
       # --------------------------------------------------------
       # 7. VERIFY
       # --------------------------------------------------------
