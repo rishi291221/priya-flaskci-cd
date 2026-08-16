@@ -5,7 +5,7 @@ from bson.objectid import ObjectId
 @pytest.fixture
 def client():
     app.config["TESTING"] = True
-    app.config["MONGO_URI"] = "mongodb://localhost:27017/test_student_db"  # test DB
+    app.config["MONGO_URI"] = "mongodb+srv://priyanatarajan_db_user:2NPmTsZgK88vxVuA@cluster0.x02q1av.mongodb.net/retryWrites=true&w=majority"  # test DB
     client = app.test_client()
 
     # Setup: clear and create test data
