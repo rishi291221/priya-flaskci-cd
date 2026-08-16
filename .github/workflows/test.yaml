@@ -1,0 +1,19 @@
+- name: TEST - SSH connection to EC2
+  uses: appleboy/ssh-action@v1.2.5
+
+  with:
+    host: ${{ secrets.EC2_HOST }}
+    username: ${{ secrets.EC2_USERNAME }}
+    key: ${{ secrets.EC2_SSH_KEY }}
+    port: 22
+
+    script: |
+      echo "SSH connection successful"
+      echo "User:"
+      whoami
+
+      echo "Hostname:"
+      hostname
+
+      echo "Docker:"
+      docker --version
