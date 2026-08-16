@@ -287,9 +287,9 @@ jobs:
             echo "Creating environment file..."
 
             cat > ~/flask-practice/.env <<EOF
-MONGO_URI=$MONGO_URI
-SECRET_KEY=$SECRET_KEY
-EOF
+            MONGO_URI=$MONGO_URI
+            SECRET_KEY=$SECRET_KEY
+            EOF
 
             chmod 600 ~/flask-practice/.env
 
