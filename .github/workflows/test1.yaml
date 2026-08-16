@@ -1,0 +1,645 @@
+name: Flask CI/CD pipeline to build docker, Ecr to Ec2
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+
+# ============================================================
+# GLOBAL VARIABLES
+# ============================================================
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: priya/flask-cicd
+  CONTAINER_NAME: flask-practice_EC2
+  APP_PORT: 5000
+
+
+# ============================================================
+# JOB 1 - TEST
+# ============================================================
+
+jobs:
+
+  test:
+
+    name: "1. Test"
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # --------------------------------------------------------
+      # 1. Checkout
+      # --------------------------------------------------------
+
+      - name: "1. Checkout"
+
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------------
+      # 2. Setup Python
+      # --------------------------------------------------------
+
+      - name: "2. Setup Python"
+
+        uses: actions/setup-python@v5
+
+        with:
+          python-version: "3.11"
+
+
+      # --------------------------------------------------------
+      # 3. Install dependencies
+      # --------------------------------------------------------
+
+      - name: "3. Install dependencies"
+
+        run: |
+
+          echo "======================================"
+          echo "INSTALL DEPENDENCIES"
+          echo "======================================"
+
+          python -m pip install --upgrade pip
+
+          pip install -r requirements.txt
+
+
+      # --------------------------------------------------------
+      # 4. Run pytest
+      # --------------------------------------------------------
+
+      - name: "4. Run pytest"
+
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+
+        run: |
+
+          echo "======================================"
+          echo "RUNNING PYTEST"
+          echo "======================================"
+
+          pytest -v
+
+          echo "======================================"
+          echo "ALL TESTS PASSED"
+          echo "======================================"
+
+
+# ============================================================
+# JOB 2 - BUILD + PUSH TO ECR
+# ============================================================
+
+  build:
+
+    name: "2. Build Docker + Push ECR"
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - test
+
+    steps:
+
+      # --------------------------------------------------------
+      # Checkout
+      # --------------------------------------------------------
+
+      - name: "Checkout"
+
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------------
+      # Build Docker image
+      # --------------------------------------------------------
+
+      - name: "Build Docker image"
+
+        run: |
+
+          echo "======================================"
+          echo "BUILD DOCKER IMAGE"
+          echo "======================================"
+
+          docker build \
+            -t "$ECR_REPOSITORY:${{ github.sha }}" \
+            .
+
+          echo "Docker image built successfully."
+
+
+      # --------------------------------------------------------
+      # Configure AWS
+      # --------------------------------------------------------
+
+      - name: "Configure AWS credentials"
+
+        uses: aws-actions/configure-aws-credentials@v4
+
+        with:
+
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+          aws-region: ${{ secrets.AWS_REGION }}
+
+
+      # --------------------------------------------------------
+      # Login to ECR
+      # --------------------------------------------------------
+
+      - name: "Login to Amazon ECR"
+
+        id: login-ecr
+
+        uses: aws-actions/amazon-ecr-login@v2
+
+
+      # --------------------------------------------------------
+      # Push Docker image
+      # --------------------------------------------------------
+
+      - name: "Push Docker image to ECR"
+
+        env:
+
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+
+          IMAGE_TAG: ${{ github.sha }}
+
+        run: |
+
+          echo "======================================"
+          echo "PUSH DOCKER IMAGE TO ECR"
+          echo "======================================"
+
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          echo "Image:"
+          echo "$IMAGE_URI"
+
+          docker tag \
+            "$ECR_REPOSITORY:$IMAGE_TAG" \
+            "$IMAGE_URI"
+
+          docker push "$IMAGE_URI"
+
+          echo "======================================"
+          echo "IMAGE PUSHED TO ECR"
+          echo "======================================"
+
+
+# ============================================================
+# JOB 3 - DEPLOY TO EC2
+# ============================================================
+
+  deploy:
+
+    name: "3. Deploy + Verify EC2"
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - build
+
+    steps:
+
+      # --------------------------------------------------------
+      # Deploy to EC2
+      # --------------------------------------------------------
+
+      - name: "Deploy to EC2"
+
+        uses: appleboy/ssh-action@v1.2.5
+
+        env:
+
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+          ECR_REGISTRY: 206226812351.dkr.ecr.us-east-1.amazonaws.com
+
+          ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}
+
+          IMAGE_TAG: ${{ github.sha }}
+
+          CONTAINER_NAME: ${{ env.CONTAINER_NAME }}
+
+          APP_PORT: ${{ env.APP_PORT }}
+
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+
+        with:
+
+          host: ${{ secrets.EC2_HOST }}
+
+          username: ec2-user
+
+          key: ${{ secrets.EC2_SSH_KEY }}
+
+          port: 22
+
+          envs: AWS_REGION,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,CONTAINER_NAME,APP_PORT,MONGO_URI,SECRET_KEY
+
+          script: |
+
+            set -e
+
+            echo "======================================"
+            echo "STAGE 6 - DEPLOY TO EC2"
+            echo "======================================"
+
+            echo "Connected user:"
+            whoami
+
+            echo "Hostname:"
+            hostname
+
+            echo "Docker version:"
+            docker --version
+
+
+            # --------------------------------------------------
+            # Build image URI
+            # --------------------------------------------------
+
+            IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+            echo "Docker image:"
+            echo "$IMAGE_URI"
+
+
+            # --------------------------------------------------
+            # Login to ECR
+            # --------------------------------------------------
+
+            echo "Logging into Amazon ECR..."
+
+            aws ecr get-login-password \
+              --region "$AWS_REGION" | \
+              docker login \
+              --username AWS \
+              --password-stdin "$ECR_REGISTRY"
+
+            echo "ECR login successful."
+
+
+            # --------------------------------------------------
+            # Pull image
+            # --------------------------------------------------
+
+            echo "Pulling Docker image..."
+
+            docker pull "$IMAGE_URI"
+
+            echo "Docker image pulled successfully."
+
+
+            # --------------------------------------------------
+            # Stop existing container
+            # --------------------------------------------------
+
+            echo "Stopping existing container..."
+
+            docker stop "$CONTAINER_NAME" || true
+
+
+            # --------------------------------------------------
+            # Remove existing container
+            # --------------------------------------------------
+
+            echo "Removing existing container..."
+
+            docker rm "$CONTAINER_NAME" || true
+
+
+            # --------------------------------------------------
+            # Create application directory
+            # --------------------------------------------------
+
+            mkdir -p "$HOME/flask-practice"
+
+
+            # --------------------------------------------------
+            # Create environment file
+            # --------------------------------------------------
+
+            echo "Creating environment file..."
+
+            cat > "$HOME/flask-practice/.env" <<EOF
+            MONGO_URI=$MONGO_URI
+            SECRET_KEY=$SECRET_KEY
+            EOF
+
+            chmod 600 "$HOME/flask-practice/.env"
+
+
+            # --------------------------------------------------
+            # Start new container
+            # --------------------------------------------------
+
+            echo "Starting new container..."
+
+            docker run -d \
+              --name "$CONTAINER_NAME" \
+              --restart unless-stopped \
+              --env-file "$HOME/flask-practice/.env" \
+              -p "$APP_PORT:$APP_PORT" \
+              "$IMAGE_URI"
+
+
+            echo "Container started."
+
+
+            # --------------------------------------------------
+            # Verify container
+            # --------------------------------------------------
+
+            docker ps \
+              --filter "name=$CONTAINER_NAME"
+
+
+            echo "======================================"
+            echo "EC2 DEPLOYMENT COMPLETED"
+            echo "======================================"
+
+
+      # ========================================================
+      # STAGE 7 - VERIFY
+      # ========================================================
+
+      - name: "Verify /health"
+
+        uses: appleboy/ssh-action@v1.2.5
+
+        with:
+
+          host: ${{ secrets.EC2_HOST }}
+
+          username: ec2-user
+
+          key: ${{ secrets.EC2_SSH_KEY }}
+
+          port: 22
+
+          script: |
+
+            set -e
+
+            echo "======================================"
+            echo "STAGE 7 - VERIFY"
+            echo "======================================"
+
+            HEALTH_URL="http://127.0.0.1:5000/health"
+
+            echo "Health URL:"
+            echo "$HEALTH_URL"
+
+
+            # --------------------------------------------------
+            # Poll health endpoint
+            # --------------------------------------------------
+
+            for i in {1..12}
+            do
+
+              echo ""
+              echo "Health check attempt $i/12..."
+
+              HTTP_STATUS=$(curl \
+                --silent \
+                --output /tmp/health_response.txt \
+                --write-out "%{http_code}" \
+                "$HEALTH_URL" || true)
+
+
+              echo "HTTP status: $HTTP_STATUS"
+
+
+              if [ "$HTTP_STATUS" = "200" ]; then
+
+                echo ""
+                echo "======================================"
+                echo "APPLICATION HEALTHY"
+                echo "======================================"
+
+                echo "Health response:"
+
+                cat /tmp/health_response.txt
+
+                echo ""
+
+                exit 0
+
+              fi
+
+
+              echo "Application not ready yet."
+
+              sleep 5
+
+            done
+
+
+            # --------------------------------------------------
+            # Health check failed
+            # --------------------------------------------------
+
+            echo ""
+            echo "======================================"
+            echo "HEALTH CHECK FAILED"
+            echo "======================================"
+
+            echo "Container status:"
+
+            docker ps -a \
+              --filter "name=flask-practice_EC2"
+
+
+            echo ""
+            echo "Container logs:"
+
+            docker logs flask-practice_EC2 --tail 50 || true
+
+
+            exit 1
+
+
+# ============================================================
+# JOB 4 - NOTIFICATION
+# ============================================================
+
+  notify:
+
+    name: "4. Notification"
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - test
+      - build
+      - deploy
+
+    if: always()
+
+    steps:
+
+
+      # ========================================================
+      # SUCCESS EMAIL
+      # ========================================================
+
+      - name: "SUCCESS notification"
+
+        if: |
+          needs.test.result == 'success' &&
+          needs.build.result == 'success' &&
+          needs.deploy.result == 'success'
+
+        uses: dawidd6/action-send-mail@v6
+
+        with:
+
+          server_address: smtp.gmail.com
+
+          server_port: 465
+
+          secure: true
+
+          username: ${{ secrets.MAIL_USERNAME }}
+
+          password: ${{ secrets.MAIL_PASSWORD }}
+
+          from: ${{ secrets.MAIL_USERNAME }}
+
+          to: ${{ secrets.MAIL_TO }}
+
+          subject: "SUCCESS - Flask CI/CD Pipeline"
+
+          body: |
+
+            Flask CI/CD pipeline completed successfully.
+
+            ==========================================
+            DEPLOYMENT SUCCESS
+            ==========================================
+
+            Repository:
+            ${{ github.repository }}
+
+            Branch:
+            ${{ github.ref_name }}
+
+            Commit:
+            ${{ github.sha }}
+
+            Pipeline:
+
+            1. Checkout       - SUCCESS
+            2. Install        - SUCCESS
+            3. Test           - SUCCESS
+            4. Docker Build   - SUCCESS
+            5. Push to ECR    - SUCCESS
+            6. Deploy to EC2  - SUCCESS
+            7. /health        - SUCCESS
+
+            The Flask application returned HTTP 200.
+
+            Workflow:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+
+      # ========================================================
+      # FAILURE EMAIL
+      # ========================================================
+
+      - name: "FAILURE notification"
+
+        if: |
+          needs.test.result != 'success' ||
+          needs.build.result != 'success' ||
+          needs.deploy.result != 'success'
+
+        uses: dawidd6/action-send-mail@v6
+
+        with:
+
+          server_address: smtp.gmail.com
+
+          server_port: 465
+
+          secure: true
+
+          username: ${{ secrets.MAIL_USERNAME }}
+
+          password: ${{ secrets.MAIL_PASSWORD }}
+
+          from: ${{ secrets.MAIL_USERNAME }}
+
+          to: ${{ secrets.MAIL_TO }}
+
+          subject: "FAILED - Flask CI/CD Pipeline"
+
+          body: |
+
+            Flask CI/CD pipeline FAILED.
+
+            ==========================================
+            DEPLOYMENT FAILURE
+            ==========================================
+
+            Repository:
+            ${{ github.repository }}
+
+            Branch:
+            ${{ github.ref_name }}
+
+            Commit:
+            ${{ github.sha }}
+
+
+            ==========================================
+            JOB RESULTS
+            ==========================================
+
+            TEST:
+            ${{ needs.test.result }}
+
+            BUILD + ECR:
+            ${{ needs.build.result }}
+
+            EC2 DEPLOYMENT:
+            ${{ needs.deploy.result }}
+
+
+            ==========================================
+            PIPELINE
+            ==========================================
+
+            1. Checkout
+            2. Install
+            3. Test
+            4. Docker Build
+            5. Push to ECR
+            6. Deploy to EC2
+            7. Verify /health
+
+
+            Please check the GitHub Actions logs:
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
