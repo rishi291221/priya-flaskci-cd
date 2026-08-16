@@ -7,14 +7,16 @@ on:
 
   workflow_dispatch:
 
+
 # ============================================================
 # GLOBAL ENVIRONMENT VARIABLES
 # ============================================================
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: priya/flask-cicd
-  CONTAINER_NAME: flask-practice
+  CONTAINER_NAME: flask-practice_EC2
   APP_PORT: 5000
+
 
 # ============================================================
 # JOBS
@@ -31,7 +33,7 @@ jobs:
     steps:
 
       # --------------------------------------------------------
-      # 1. Checkout
+      # 1. Checkout source code
       # --------------------------------------------------------
       - name: 1. Checkout code
         uses: actions/checkout@v4
@@ -69,22 +71,23 @@ jobs:
 
 
   # ==========================================================
-  # JOB 2 - BUILD + ECR + DEPLOY
+  # JOB 2 - BUILD + PUSH + DEPLOY
   # ==========================================================
   deploy:
     name: "5-9 Build, Push, Deploy and Verify"
     runs-on: ubuntu-latest
 
-    # Deploy only if tests pass
+    # Deploy only when tests pass
     needs: test
 
     steps:
 
       # --------------------------------------------------------
-      # 5. Checkout
+      # 5. Checkout source code
       # --------------------------------------------------------
       - name: 5. Checkout code
         uses: actions/checkout@v4
+
 
       # --------------------------------------------------------
       # 6. Configure AWS credentials
@@ -96,12 +99,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+
       # --------------------------------------------------------
       # 7. Login to Amazon ECR
       # --------------------------------------------------------
       - name: 7. Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
 
       # --------------------------------------------------------
       # 8. Build and Push Docker Image
@@ -110,6 +115,7 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
+
         run: |
 
           echo "======================================"
@@ -126,6 +132,7 @@ jobs:
             .
 
           echo "Docker image built successfully."
+
 
           echo "======================================"
           echo "PUSHING DOCKER IMAGE TO ECR"
@@ -154,30 +161,34 @@ jobs:
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
 
         with:
+
           # ----------------------------------------------------
-          # EC2 SSH CONFIGURATION
+          # EC2 CONNECTION
           # ----------------------------------------------------
           host: ${{ secrets.EC2_HOST }}
 
-          # Your EC2 is Amazon Linux 2023
+          # Your EC2 username
           username: ec2-user
 
-          # Private key stored in GitHub Repository Secrets
+          # Complete contents of priyamay17.pem
           key: ${{ secrets.EC2_SSH_KEY }}
 
           port: 22
 
+
           # ----------------------------------------------------
-          # Pass environment variables to EC2
+          # Environment variables sent to EC2
           # ----------------------------------------------------
           envs: AWS_REGION,ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,CONTAINER_NAME,APP_PORT,MONGO_URI,SECRET_KEY
 
+
           # ----------------------------------------------------
-          # EC2 deployment script
+          # EC2 DEPLOYMENT SCRIPT
           # ----------------------------------------------------
           script: |
 
             set -e
+
 
             echo "======================================"
             echo "EC2 DEPLOYMENT"
@@ -192,9 +203,10 @@ jobs:
             echo "Docker version:"
             docker --version
 
-            # --------------------------------------------------
-            # Create full image URI
-            # --------------------------------------------------
+
+            # ==================================================
+            # IMAGE URI
+            # ==================================================
 
             IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
@@ -209,9 +221,9 @@ jobs:
             echo "$IMAGE_URI"
 
 
-            # --------------------------------------------------
-            # Authenticate EC2 with ECR
-            # --------------------------------------------------
+            # ==================================================
+            # LOGIN TO ECR
+            # ==================================================
 
             echo "======================================"
             echo "LOGIN TO AMAZON ECR"
@@ -226,9 +238,9 @@ jobs:
             echo "ECR login successful."
 
 
-            # --------------------------------------------------
-            # Pull exact image from ECR
-            # --------------------------------------------------
+            # ==================================================
+            # PULL IMAGE
+            # ==================================================
 
             echo "======================================"
             echo "PULLING DOCKER IMAGE"
@@ -239,9 +251,9 @@ jobs:
             echo "Image pulled successfully."
 
 
-            # --------------------------------------------------
-            # Stop existing container
-            # --------------------------------------------------
+            # ==================================================
+            # STOP OLD CONTAINER
+            # ==================================================
 
             echo "======================================"
             echo "STOPPING OLD CONTAINER"
@@ -250,29 +262,29 @@ jobs:
             docker stop "$CONTAINER_NAME" || true
 
 
-            # --------------------------------------------------
-            # Remove existing container
-            # --------------------------------------------------
+            # ==================================================
+            # REMOVE OLD CONTAINER
+            # ==================================================
 
             echo "Removing old container..."
 
             docker rm "$CONTAINER_NAME" || true
 
 
-            # --------------------------------------------------
-            # Create application directory
-            # --------------------------------------------------
+            # ==================================================
+            # CREATE APPLICATION DIRECTORY
+            # ==================================================
 
             echo "Creating application directory..."
 
             mkdir -p ~/flask-practice
 
 
-            # --------------------------------------------------
-            # Create environment file
-            # --------------------------------------------------
+            # ==================================================
+            # CREATE ENVIRONMENT FILE
+            # ==================================================
 
-            echo "Creating application environment file..."
+            echo "Creating environment file..."
 
             cat > ~/flask-practice/.env <<EOF
 MONGO_URI=$MONGO_URI
@@ -282,9 +294,9 @@ EOF
             chmod 600 ~/flask-practice/.env
 
 
-            # --------------------------------------------------
-            # Start new container
-            # --------------------------------------------------
+            # ==================================================
+            # START NEW CONTAINER
+            # ==================================================
 
             echo "======================================"
             echo "STARTING NEW CONTAINER"
@@ -300,9 +312,9 @@ EOF
             echo "New container started."
 
 
-            # --------------------------------------------------
-            # Verify container
-            # --------------------------------------------------
+            # ==================================================
+            # VERIFY CONTAINER
+            # ==================================================
 
             echo "======================================"
             echo "VERIFYING CONTAINER"
@@ -312,9 +324,9 @@ EOF
               --filter "name=$CONTAINER_NAME"
 
 
-            # --------------------------------------------------
-            # Show container logs
-            # --------------------------------------------------
+            # ==================================================
+            # SHOW LAST 20 LOG LINES
+            # ==================================================
 
             echo "======================================"
             echo "CONTAINER LOGS"
@@ -324,5 +336,5 @@ EOF
 
 
             echo "======================================"
-            echo "EC2 DEPLOYMENT COMPLETED"
+            echo "EC2 DEPLOYMENT COMPLETED SUCCESSFULLY"
             echo "======================================"
