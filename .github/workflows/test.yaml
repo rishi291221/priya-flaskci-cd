@@ -1,19 +1,633 @@
-- name: TEST - SSH connection to EC2
-  uses: appleboy/ssh-action@v1.2.5
+name: Flask CI/CD
 
-  with:
-    host: ${{ secrets.EC2_HOST }}
-    username: ${{ secrets.EC2_USERNAME }}
-    key: ${{ secrets.EC2_SSH_KEY }}
-    port: 22
+on:
+  push:
+    branches:
+      - main
 
-    script: |
-      echo "SSH connection successful"
-      echo "User:"
-      whoami
+  workflow_dispatch:
 
-      echo "Hostname:"
-      hostname
 
-      echo "Docker:"
-      docker --version
+# ============================================================
+# GLOBAL VARIABLES
+# ============================================================
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: priya/flask-cicd
+  CONTAINER_NAME: flask-practice
+  APP_PORT: 5000
+
+
+# ============================================================
+# PIPELINE
+# ============================================================
+
+jobs:
+
+  # ==========================================================
+  # STAGES 1 - 7
+  # ==========================================================
+
+  pipeline:
+
+    name: "Stages 1-7 CI/CD"
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ========================================================
+      # STAGE 1 - CHECKOUT
+      # ========================================================
+
+      - name: "1. Checkout"
+
+        uses: actions/checkout@v4
+
+
+      # ========================================================
+      # STAGE 2 - INSTALL
+      # ========================================================
+
+      - name: "2. Setup Python"
+
+        uses: actions/setup-python@v5
+
+        with:
+          python-version: "3.11"
+
+
+      - name: "2. Install dependencies"
+
+        run: |
+          echo "======================================"
+          echo "STAGE 2 - INSTALL"
+          echo "======================================"
+
+          python -m pip install --upgrade pip
+
+          pip install -r requirements.txt
+
+          echo "Dependencies installed successfully."
+
+
+      # ========================================================
+      # STAGE 3 - TEST
+      #
+      # If pytest fails:
+      # Stages 4-7 are automatically skipped.
+      # Stage 8 notification still runs.
+      # ========================================================
+
+      - name: "3. Test"
+
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+
+        run: |
+          echo "======================================"
+          echo "STAGE 3 - TEST"
+          echo "======================================"
+
+          pytest -v
+
+          echo "======================================"
+          echo "ALL TESTS PASSED"
+          echo "======================================"
+
+
+      # ========================================================
+      # STAGE 4 - BUILD
+      # ========================================================
+
+      - name: "4. Build Docker image"
+
+        run: |
+          echo "======================================"
+          echo "STAGE 4 - BUILD"
+          echo "======================================"
+
+          echo "Commit SHA:"
+          echo "${{ github.sha }}"
+
+          docker build \
+            --tag "$ECR_REPOSITORY:${{ github.sha }}" \
+            .
+
+          echo "======================================"
+          echo "DOCKER IMAGE BUILT"
+          echo "======================================"
+
+          docker images "$ECR_REPOSITORY"
+
+
+      # ========================================================
+      # AWS CREDENTIALS
+      #
+      # Required before Stage 5.
+      # ========================================================
+
+      - name: "Configure AWS credentials"
+
+        uses: aws-actions/configure-aws-credentials@v4
+
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+
+      # ========================================================
+      # STAGE 5 - PUSH TO ECR
+      # ========================================================
+
+      - name: "5. Login to Amazon ECR"
+
+        id: login-ecr
+
+        uses: aws-actions/amazon-ecr-login@v2
+
+
+      - name: "5. Push Docker image to ECR"
+
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+
+        run: |
+          echo "======================================"
+          echo "STAGE 5 - PUSH TO ECR"
+          echo "======================================"
+
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          echo "ECR Image:"
+          echo "$IMAGE_URI"
+
+          echo "Tagging Docker image..."
+
+          docker tag \
+            "$ECR_REPOSITORY:$IMAGE_TAG" \
+            "$IMAGE_URI"
+
+          echo "Pushing Docker image..."
+
+          docker push "$IMAGE_URI"
+
+          echo "======================================"
+          echo "IMAGE PUSHED TO ECR SUCCESSFULLY"
+          echo "======================================"
+
+
+      # ========================================================
+      # STAGE 6 - DEPLOY TO EC2
+      # ========================================================
+
+      - name: "6. Deploy to EC2"
+
+        uses: appleboy/ssh-action@v1.2.5
+
+        env:
+
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+
+          ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}
+
+          IMAGE_TAG: ${{ github.sha }}
+
+          CONTAINER_NAME: ${{ env.CONTAINER_NAME }}
+
+          APP_PORT: ${{ env.APP_PORT }}
+
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+
+
+        with:
+
+          # ----------------------------------------------------
+          # EC2 SSH DETAILS
+          # ----------------------------------------------------
+
+          host: ${{ secrets.EC2_HOST }}
+
+          username: ec2-user
+
+          key: ${{ secrets.EC2_SSH_KEY }}
+
+          port: 22
+
+
+          # ----------------------------------------------------
+          # ENVIRONMENT VARIABLES SENT TO EC2
+          # ----------------------------------------------------
+
+          envs: AWS_REGION,ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,CONTAINER_NAME,APP_PORT,MONGO_URI,SECRET_KEY
+
+
+          # ----------------------------------------------------
+          # EC2 DEPLOYMENT SCRIPT
+          # ----------------------------------------------------
+
+          script: |
+
+            set -e
+
+            echo "======================================"
+            echo "STAGE 6 - DEPLOY TO EC2"
+            echo "======================================"
+
+            echo "Connected user:"
+            whoami
+
+            echo "Hostname:"
+            hostname
+
+            echo "Docker version:"
+            docker --version
+
+
+            # --------------------------------------------------
+            # Build image URI
+            # --------------------------------------------------
+
+            IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+            echo "Image:"
+            echo "$IMAGE_URI"
+
+
+            # --------------------------------------------------
+            # Login to ECR
+            # --------------------------------------------------
+
+            echo "Logging into Amazon ECR..."
+
+            aws ecr get-login-password \
+              --region "$AWS_REGION" | \
+              docker login \
+              --username AWS \
+              --password-stdin "$ECR_REGISTRY"
+
+            echo "ECR login successful."
+
+
+            # --------------------------------------------------
+            # Pull exact commit SHA image
+            # --------------------------------------------------
+
+            echo "Pulling Docker image..."
+
+            docker pull "$IMAGE_URI"
+
+            echo "Docker image pulled successfully."
+
+
+            # --------------------------------------------------
+            # Stop existing container
+            # --------------------------------------------------
+
+            echo "Stopping existing container..."
+
+            docker stop "$CONTAINER_NAME" || true
+
+
+            # --------------------------------------------------
+            # Remove existing container
+            # --------------------------------------------------
+
+            echo "Removing existing container..."
+
+            docker rm "$CONTAINER_NAME" || true
+
+
+            # --------------------------------------------------
+            # Create application directory
+            # --------------------------------------------------
+
+            mkdir -p "$HOME/flask-practice"
+
+
+            # --------------------------------------------------
+            # Create environment file
+            # --------------------------------------------------
+
+            echo "Creating application environment file..."
+
+            cat > "$HOME/flask-practice/.env" <<EOF
+            MONGO_URI=$MONGO_URI
+            SECRET_KEY=$SECRET_KEY
+            EOF
+
+            chmod 600 "$HOME/flask-practice/.env"
+
+
+            # --------------------------------------------------
+            # Start new container
+            # --------------------------------------------------
+
+            echo "Starting new container..."
+
+            docker run -d \
+              --name "$CONTAINER_NAME" \
+              --restart unless-stopped \
+              --env-file "$HOME/flask-practice/.env" \
+              -p "$APP_PORT:$APP_PORT" \
+              "$IMAGE_URI"
+
+            echo "New container started."
+
+
+            # --------------------------------------------------
+            # Display container status
+            # --------------------------------------------------
+
+            echo "Container status:"
+
+            docker ps \
+              --filter "name=$CONTAINER_NAME"
+
+
+            echo "======================================"
+            echo "STAGE 6 - DEPLOYMENT COMPLETED"
+            echo "======================================"
+
+
+      # ========================================================
+      # STAGE 7 - VERIFY
+      #
+      # This is the REAL deployment success gate.
+      #
+      # The health check is executed on EC2 against localhost.
+      # ========================================================
+
+      - name: "7. Verify application health"
+
+        uses: appleboy/ssh-action@v1.2.5
+
+        with:
+
+          host: ${{ secrets.EC2_HOST }}
+
+          username: ec2-user
+
+          key: ${{ secrets.EC2_SSH_KEY }}
+
+          port: 22
+
+
+          script: |
+
+            set -e
+
+            echo "======================================"
+            echo "STAGE 7 - VERIFY"
+            echo "======================================"
+
+            echo "Checking application health..."
+
+            HEALTH_URL="http://127.0.0.1:5000/health"
+
+            echo "Health URL:"
+            echo "$HEALTH_URL"
+
+
+            # --------------------------------------------------
+            # Poll /health
+            #
+            # 12 attempts x 5 seconds = 60 seconds
+            # --------------------------------------------------
+
+            for i in {1..12}
+            do
+
+              echo ""
+              echo "Health check attempt $i/12..."
+
+              HTTP_STATUS=$(curl \
+                --silent \
+                --output /tmp/health_response.txt \
+                --write-out "%{http_code}" \
+                "$HEALTH_URL" || true)
+
+
+              echo "HTTP status: $HTTP_STATUS"
+
+
+              if [ "$HTTP_STATUS" = "200" ]; then
+
+                echo ""
+                echo "======================================"
+                echo "APPLICATION HEALTHY"
+                echo "======================================"
+
+                echo "Health response:"
+
+                cat /tmp/health_response.txt
+
+                echo ""
+
+                echo "STAGE 7 - VERIFY SUCCESS"
+
+                exit 0
+
+              fi
+
+
+              echo "Application not ready yet."
+
+              sleep 5
+
+            done
+
+
+            # --------------------------------------------------
+            # Health check failed
+            # --------------------------------------------------
+
+            echo ""
+            echo "======================================"
+            echo "STAGE 7 - VERIFY FAILED"
+            echo "======================================"
+
+            echo "The application did not return HTTP 200."
+
+
+            echo ""
+            echo "Container status:"
+
+            docker ps -a \
+              --filter "name=$CONTAINER_NAME"
+
+
+            echo ""
+            echo "Container logs:"
+
+            docker logs "$CONTAINER_NAME" --tail 50 || true
+
+
+            exit 1
+
+
+
+  # ==========================================================
+  # STAGE 8 - NOTIFY
+  #
+  # ALWAYS runs, even if Stage 3, 5, 6 or 7 fails.
+  # ==========================================================
+
+  notify:
+
+    name: "8. Notify"
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - pipeline
+
+    if: always()
+
+
+    steps:
+
+      # ========================================================
+      # SUCCESS NOTIFICATION
+      # ========================================================
+
+      - name: "8. Send SUCCESS email"
+
+        if: needs.pipeline.result == 'success'
+
+        uses: dawidd6/action-send-mail@v18
+
+        with:
+
+          server_address: smtp.gmail.com
+
+          server_port: 465
+
+          secure: true
+
+          username: ${{ secrets.MAIL_USERNAME }}
+
+          password: ${{ secrets.MAIL_PASSWORD }}
+
+          from: ${{ secrets.MAIL_USERNAME }}
+
+          to: ${{ secrets.MAIL_TO }}
+
+          subject: "SUCCESS - Flask CI/CD Pipeline"
+
+          body: |
+            Flask CI/CD pipeline completed successfully.
+
+            ==========================================
+            DEPLOYMENT SUCCESS
+            ==========================================
+
+            Repository:
+            ${{ github.repository }}
+
+            Branch:
+            ${{ github.ref_name }}
+
+            Commit SHA:
+            ${{ github.sha }}
+
+            Pipeline stages:
+
+            1. Checkout        - SUCCESS
+            2. Install         - SUCCESS
+            3. Test            - SUCCESS
+            4. Build           - SUCCESS
+            5. Push to ECR     - SUCCESS
+            6. Deploy to EC2   - SUCCESS
+            7. Verify /health  - SUCCESS
+
+            The application returned HTTP 200
+            from the /health endpoint.
+
+            Docker image:
+
+            ${{ github.sha }}
+
+            Workflow:
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+
+      # ========================================================
+      # FAILURE NOTIFICATION
+      #
+      # This runs whenever the pipeline is NOT successful.
+      # This includes:
+      #
+      # - Test failure
+      # - Build failure
+      # - ECR failure
+      # - SSH/deployment failure
+      # - Health check failure
+      # - Cancellation
+      # ========================================================
+
+      - name: "8. Send FAILURE email"
+
+        if: needs.pipeline.result != 'success'
+
+        uses: dawidd6/action-send-mail@v18
+
+        with:
+
+          server_address: smtp.gmail.com
+
+          server_port: 465
+
+          secure: true
+
+          username: ${{ secrets.MAIL_USERNAME }}
+
+          password: ${{ secrets.MAIL_PASSWORD }}
+
+          from: ${{ secrets.MAIL_USERNAME }}
+
+          to: ${{ secrets.MAIL_TO }}
+
+          subject: "FAILED - Flask CI/CD Pipeline"
+
+          body: |
+            Flask CI/CD pipeline FAILED.
+
+            ==========================================
+            DEPLOYMENT FAILURE
+            ==========================================
+
+            Repository:
+            ${{ github.repository }}
+
+            Branch:
+            ${{ github.ref_name }}
+
+            Commit SHA:
+            ${{ github.sha }}
+
+            Pipeline result:
+
+            ${{ needs.pipeline.result }}
+
+
+            ==========================================
+            PIPELINE STAGES
+            ==========================================
+
+            1. Checkout
+            2. Install
+            3. Test
+            4. Build
+            5. Push to ECR
+            6. Deploy to EC2
+            7. Verify /health
